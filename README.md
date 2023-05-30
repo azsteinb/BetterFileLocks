@@ -9,6 +9,10 @@ Making a multithreaded program in C? Are you dealing with multithreaded IO opera
 + Easy to declare default global bflock table can be enabled by simply running INIT_B_FLOCK(); at the start of your program.
 + Easy to deconstruct by simply running DECONSTRUCT_B_FLOCK(); at the end of your program.
 
+## To-do
++ Add support to table files based on file descriptors instead of file-name. The difficulty with this is keeping track of closed files. Might add more for the user to do.
++ In most use cases, such as a server returning files, the file names will be known anyway, but this is definitely not always the case. I will figure out an alternative.
+
 ## Examples
 
 ### Example 1:
