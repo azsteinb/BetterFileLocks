@@ -14,12 +14,10 @@
 typedef struct LockNode
 {
     char resourceName[BFLOCK_RESOURCE_NAME_SIZE]; /* File names have a maximum of 21 characters + the null character. This is to http standards by default */
-    pthread_mutex_t *writeLock;
-    pthread_mutex_t *readLock;
-    pthread_cond_t *startWriting;
-    pthread_cond_t *startReading;
-    bool canRead;
-    bool canWrite;
+    pthread_mutex_t *flagLock;
+    pthread_cond_t *ioCondition;
+    bool isWriting;
+    int16_t activeReaders; // number of readers
     struct LockNode *next;
 } LockNode;
 
@@ -35,7 +33,7 @@ SharedLocks *B_FLOCK_TABLE; // Global Lock Table for this process
 /* This returns the lock node associated with the file given by the resource name. Thread safe */
 LockNode *getLockNode(char *resourceName, SharedLocks *fileLockTable);
 
-/* This inserts a LockNode into the hash table. Thread safe. You don't really need to use this though, because getLockNode, unless reimplemented by the user, will automatically create and insert a lockNode for unknown resource names */
+/* This inserts a LockNode into the hash table. Thread safe. You don't really need to use this though, because getLockNode, unless reimplemented by the user, will automatically create and insert a lockNode for unknown resource names. You should only use this if you have a scenario where you ~need~ to insert a file before you access it for the first time. */
 int8_t insertLock(LockNode *lockNode, SharedLocks *fileLockTable);
 
 /* This creates a lock node. Thread safe */
@@ -44,8 +42,8 @@ LockNode *createLockNode(char *resourceName);
 /* Constructor. Thread safe. */
 SharedLocks *createSharedLocks(uint16_t size);
 
-/* Initialize the global lock table. Do not touch this or call this */
-int8_t _initFileLockTable();
+/* Initialize the global lock table. Call this at the beginning of the program. If you do not want to use the global BFLOCK table, then use createSharedLocks() instead and use the returned SharedLocks pointer locally */
+int8_t INIT_B_FLOCK();
 
 /* deconstructor. Call this at the end of the program. Returns true if successful. Program will leak if this is not called */
 int8_t DECONSTRUCT_B_FLOCK();
@@ -96,6 +94,22 @@ LockNode *getLockNode(char *resourceName, SharedLocks *fileLockTable)
     return lockNode;                                    // Return the lock
 }
 
+LockNode *createLockNode(char *resourceName)
+{
+    LockNode *n = (LockNode *)malloc(sizeof(LockNode));
+    if (n)
+    {
+        strcpy(n->resourceName, resourceName);
+        n->isWriting = false;
+        n->activeReaders = 0;
+        n->flagLock = (pthread_mutex_t *)malloc(sizeof(pthread_mutex_t));
+        n->ioCondition = (pthread_cond_t *)malloc(sizeof(pthread_cond_t));
+        pthread_mutex_init(n->flagLock, NULL);
+        pthread_cond_init(n->ioCondition, NULL);
+    }
+    return n;
+}
+
 int8_t insertLockNode(LockNode *lockNode, SharedLocks *fileLockTable)
 {
     if (fileLockTable && lockNode)
@@ -118,6 +132,72 @@ int8_t insertLockNode(LockNode *lockNode, SharedLocks *fileLockTable)
         return 0;
     }
     return -1;
+}
+
+SharedLocks *createSharedLocks(uint16_t size)
+{
+    SharedLocks *s = (SharedLocks *)malloc(sizeof(SharedLocks));
+    if (s)
+    {
+        s->lockTable = (LockNode **)calloc(sizeof(LockNode *), size);
+        s->localHashLock = (pthread_mutex_t *)malloc(sizeof(pthread_mutex_t));
+        pthread_mutex_init(s->localHashLock, NULL);
+        s->size = size;
+    }
+    return s;
+}
+
+int8_t initBFLOCK()
+{
+    B_FLOCK_TABLE = createSharedLocks(BFLOCK_HASH_TABLE_SIZE); // B_FLOCK_TABLE is a shared global pointer to a file lock table for the current process running bflock
+    if (B_FLOCK_TABLE)
+    {
+        return 0; // :)
+    }
+    return -1; // :(
+}
+
+void initWrite(LockNode *lockNode)
+{
+    pthread_mutex_lock(lockNode->flagLock);
+    while (lockNode->isWriting || lockNode->activeReaders > 0)
+    {
+        pthread_cond_wait(lockNode->ioCondition, lockNode->flagLock);
+    }
+    lockNode->isWriting = true;
+    pthread_mutex_unlock(lockNode->flagLock);
+    return;
+}
+
+void endWrite(LockNode *lockNode)
+{
+    pthread_mutex_lock(lockNode->flagLock);
+    lockNode->isWriting = false;
+    pthread_cond_signal(lockNode->ioCondition);
+    pthread_mutex_unlock(lockNode->flagLock);
+    return;
+}
+
+int16_t initRead(LockNode *lockNode)
+{
+    pthread_mutex_lock(lockNode->flagLock);
+    while (lockNode->isWriting)
+    {
+        pthread_cond_wait(lockNode->ioCondition, lockNode->flagLock);
+    }
+    lockNode->activeReaders += 1;
+    int returnValue = lockNode->activeReaders;
+    pthread_mutex_unlock(lockNode->flagLock);
+    return returnValue;
+}
+
+void endRead(LockNode *lockNode)
+{
+    pthread_mutex_lock(lockNode->flagLock);
+    lockNode->activeReaders -= 1;
+    pthread_cond_signal(lockNode->ioCondition);
+    pthread_mutex_unlock(lockNode->flagLock);
+    return;
 }
 
 unsigned long hash(char *resourceName)
