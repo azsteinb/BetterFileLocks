@@ -50,7 +50,7 @@ int main(int argc, char *argv[])
 void* thread2(void* arg)
 {
     int fd = *arg;
-    LockNode *ln = getLockNode('file-name');
+    LockNode *ln = getLockNode('file-name', B_FLOCK_TABLE);
     char buf[2048];
     initWrite(ln);
     writeNBytes(fd, 1024, buf);
@@ -60,7 +60,7 @@ void* thread2(void* arg)
 void* thread1(void* arg)
 {
     int fd = *arg;
-    LockNode *ln = getLockNode('file-name');
+    LockNode *ln = getLockNode('file-name', B_FLOCK_TABLE);
     char buf[2048];
     int16_t concurrentReadersStart = initRead(ln);
     readNBytes(fd, 1024, buf);
