@@ -45,7 +45,7 @@ SharedLocks *createSharedLocks(uint16_t size);
 /* Initialize the global lock table. Call this at the beginning of the program. If you do not want to use the global BFLOCK table, then use createSharedLocks() instead and use the returned SharedLocks pointer locally */
 int8_t INIT_B_FLOCK();
 
-/* deconstructor. Call this at the end of the program. Returns true if successful. Program will leak if this is not called */
+/* deconstructor. Call this at the end of the program. Returns 0 if successful. Program will leak if this is not called */
 int8_t DECONSTRUCT_B_FLOCK();
 
 /*
@@ -63,7 +63,7 @@ void endWrite(LockNode *lockNode);
 int16_t initRead(LockNode *lockNode);
 
 /* Put this after a read operation, returns current number of active readers on this LockNode's resource directly after the read and before its flag lock is given up.*/
-int16_t endRead(LockNode *lockNode)
+int16_t endRead(LockNode *lockNode);
 
 // IMPLEMENTATION
 #ifndef __BFLOCK_IMPLEMENTATION
@@ -159,7 +159,7 @@ SharedLocks *createSharedLocks(uint16_t size)
     return s;
 }
 
-int8_t initBFLOCK()
+int8_t INIT_B_FLOCK()
 {
     B_FLOCK_TABLE = createSharedLocks(BFLOCK_HASH_TABLE_SIZE); // B_FLOCK_TABLE is a shared global pointer to a file lock table for the current process running bflock
     if (B_FLOCK_TABLE)
@@ -167,6 +167,41 @@ int8_t initBFLOCK()
         return 0; // :)
     }
     return -1; // :(
+}
+void freeLockNode(LockNode **lockNode){
+    /**
+     * pthread_mutex_t *flagLock;
+    pthread_cond_t *ioCondition;
+    bool isWriting;
+    int16_t activeReaders; // number of readers
+    struct LockNode *next;
+    */
+   if (!lockNode || !(*lockNode)){
+    return;
+   }
+   free((*lockNode)->flagLock);
+   (*lockNode)->flagLock = NULL;
+   free((*lockNode)->ioCondition);
+   (*lockNode)->ioCondition = NULL;
+   freeLockNode(&(*lockNode)->next);
+   free(*lockNode);
+   *lockNode = NULL;
+   return;
+   
+}
+void freeSharedLocksTable(SharedLocks *sharedLocksTable){
+    pthread_mutex_lock(sharedLocksTable->localHashLock);
+    for(int i = 0; i < sharedLocksTable->size; i++){
+        if(sharedLocksTable->lockTable[i]){
+            freeLockNode(&sharedLocksTable->lockTable[i]);
+        }
+    }
+    pthread_mutex_unlock(sharedLocksTable->localHashLock);
+    free(sharedLocksTable->localHashLock);
+    sharedLocksTable->localHashLock = NULL;
+}
+int8_t DECONSTRUCT_B_FLOCK(){
+
 }
 
 void initWrite(LockNode *lockNode)
