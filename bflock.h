@@ -53,6 +53,18 @@ djb2 hashing algorithm by Dan Bernstein
 */
 unsigned long hash(char *resourceName);
 
+/* Put this before a write operation, returns nothing. Thread safe*/
+void initWrite(LockNode *lockNode);
+
+/* Put this after a write operation, returns nothing. Thread safe*/
+void endWrite(LockNode *lockNode);
+
+/* Put this before a read operation, returns current number of active readers on this LockNode's resource directly before the read operation begins and directly after it is considered safe to do so. Thread safe*/
+int16_t initRead(LockNode *lockNode);
+
+/* Put this after a read operation, returns current number of active readers on this LockNode's resource directly after the read and before its flag lock is given up.*/
+int16_t endRead(LockNode *lockNode)
+
 // IMPLEMENTATION
 #ifndef __BFLOCK_IMPLEMENTATION
 #define __BFLOCK_IMPLEMENTATION
@@ -191,13 +203,14 @@ int16_t initRead(LockNode *lockNode)
     return returnValue;
 }
 
-void endRead(LockNode *lockNode)
+int16_t endRead(LockNode *lockNode)
 {
     pthread_mutex_lock(lockNode->flagLock);
     lockNode->activeReaders -= 1;
+    int16_t returnValue = lockNode->activeReaders;
     pthread_cond_signal(lockNode->ioCondition);
     pthread_mutex_unlock(lockNode->flagLock);
-    return;
+    return returnValue;
 }
 
 unsigned long hash(char *resourceName)
